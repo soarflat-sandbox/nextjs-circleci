@@ -1,0 +1,112 @@
+# CircleCIのバージョン
+version: 2.1
+
+# job の実行環境を定義
+executors:
+  # Executors の名前（任意で OK）
+  node:
+    # steps を実行するディレクトリ
+    working_directory: ~/repo
+    # job の実行環境で Docker を利用する
+    docker:
+    # 利用する Docker イメージ
+    # 今回は CircleCI が提供している https://circleci.com/docs/2.0/circleci-images/#nodejs
+    # 利用できる version（tag）は https://circleci.com/docs/2.0/docker-image-tags.json
+    - image: circleci/node:14.15.4
+
+# job で再利用できる steps の定義
+commands:
+  # Commands の名前（任意で OK）
+  update_npm:
+    description: "npm のバージョンをあげる"
+    steps:
+      - run: 
+          name: Update NPM
+          command: "sudo npm install -g npm@7.15.0"
+  # Commands の名前（任意で OK）
+  install_dependencies:
+    description: "npm install"  
+    steps:
+      - run: 
+          name: Install Dependencies
+          command: npm install
+        
+  # Commands の名前（任意で OK）
+  restore_modules:
+    description: "node_modules をキャッシュから復元する"
+    # job の実行環境で実行される処理
+    steps:
+      # キャッシュの復元
+      - restore_cache:
+          # 復元するキャッシュの識別子
+          # package-lock.json のチェックサムに一致するキャッシュを検索する
+          key: dependency-cache-{{ .Environment.CACHE_VERSION }}-{{ checksum "package-lock.json" }}
+  # Commands の名前（任意で OK）
+  save_modules:
+    steps:
+      # キャッシュを保存する
+      - save_cache:
+          # キャッシュの識別子
+          # {{ checksum "package-lock.json" }} のように記述することで、
+          # チェックサムを利用した以下のような一意な文字列が生成される。
+          # depende-+KlBebDceJh_zOWQIAJDLEkdkKoeldAldkaKiallQ=
+          # package-lock.json が更新されるたびにキャッシュは再生成される
+          # {{ .Environment.CACHE_VERSION }} には CircleCI で定義した環境変数が入る
+          key: dependency-cache-{{ .Environment.CACHE_VERSION }}-{{ checksum "package-lock.json" }}
+          # node_modules 配下をキャッシュとして保存する
+          paths:
+            - ./node_modules
+
+# 実行処理
+jobs:
+  # job の名前。job が１つだけの場合、job 名は`build`でなければならない
+  build:
+    # job の実行環境
+    executor: node
+    steps:
+      # working_directory にチェックアウトする
+      # 今回の設定の場合、プロジェクトのファイルが`~/repo`にチェックアウト（保存）される
+      - checkout
+      # update_npm（Commands）を実行
+      - update_npm
+      # restore_modules（Commands）を実行
+      - restore_modules
+      # install_dependencies（Commands）を実行
+      - install_dependencies
+      # ローカルと Node.js と npm のバージョンをあわせてもなぜか package-lock.json に以下の差分がでる
+      # --- a/package-lock.json
+      # +++ b/package-lock.json
+      # @@ -5,6 +5,7 @@
+      #    "requires": true,
+      #    "packages": {
+      #      "": {
+      # +      "name": "nextjs-circleci",
+      #        "version": "0.1.0",
+      #        "dependencies": {
+      #          "next": "10.2.3",
+      # そのため、差分を取り消す
+      - run: git checkout -f
+      # save_modules（Commands）を実行
+      - save_modules
+  # job の名前。
+  test:
+    executor: node
+    steps:
+      - checkout
+      - update_npm
+      - restore_modules
+      - install_dependencies
+      - run:
+          name: Run tests
+          command: npm run test
+# ワークフロー（job の集まりとその実行順序など）の定義
+workflows:
+  version: 2
+  build_and_test:
+    # build job の後に test job が実行される
+    jobs:
+      - build
+      - test:
+          requires:
+            - build
+      
